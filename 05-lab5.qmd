@@ -80,7 +80,7 @@ fnRs <- sort(list.files(data_dir, pattern="_R2_001.fastq", full.names = TRUE))
 
 # Quality Check 
 
-## Question 1
+### Question 1
 
 ```{r}
 # Visualize to examine forward reads 
@@ -99,6 +99,8 @@ plotQualityProfile(fnRs[9:12])
 plotQualityProfile(fnRs[13:16])
 plotQualityProfile(fnRs[17:20])
 ```
+
+## Trim and Quality Filtering of Reads
 
 ```{r}
 # Folder for filtered reads 
@@ -133,3 +135,36 @@ min(out2$prop)
 # sample with lowest number of reads 
 min(out2$reads.out)
 ```
+
+## Denoising and Unique Sequence Estimation
+
+```{r}
+# ML method to learn errors from data in filtered folder 
+  # alternating error rate estimation and sample composition inference 
+errF <- learnErrors(filtFs, multithread=T)
+errR <- learnErrors(filtRs, multithread=T)
+```
+
+### Question 2
+
+```{r}
+# visualize learned errors for forward reads 
+p1 <- plotErrors(errF, nominalQ=TRUE) + 
+  labs(title = "Forward Read - Observed and Estimated Error Rate")
+
+# visualize learned errors for reverse reads 
+p2 <- plotErrors(errR, nominalQ=TRUE)  + 
+  labs(title = "Reverse Read - Observed and Estimated Error Rate")
+
+# export plots
+output_dir <- "/Users/hmangat02/Desktop/lab5/Biol4315_lab5_repo_HM/outputs"
+  # forward reads 
+ggsave(filename = "forwardErrorRate.pdf",plot = p1, path = output_dir)
+
+  # reverse reads
+ggsave(filename = "reverseErrorRate.pdf",plot = p2, path = output_dir)
+```
+
+The reverse and forward reads appear to have similar trend lines.
+
+## ASV Inference 
