@@ -4,28 +4,7 @@ format: html
 editor: visual
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
-
-```{r}
-#| echo: false
-2 * 2
-```
-
-The `echo: false` option disables the printing of code (only output is displayed).
-
-## Prep files 
+## Prep files
 
 ```{r}
 #download the file
@@ -61,13 +40,13 @@ download.file(
 #| echo: false
 BiocManager::install("dada2")
 
-BiocManager::install("phyloseq")
-
-lapply(c("dada2","phyloseq","vegan","tidyverse",
-         "Biostrings"), library, character.only = T)
 ```
 
-# File Prep 
+```{r}
+
+```
+
+# File Prep
 
 ```{r}
 # All forward and reverse fastq file names have the exact format: samplename_r1_001.fastq and samplename_r2_001.fastq
@@ -78,7 +57,7 @@ fnFs <- sort(list.files(data_dir, pattern="_R1_001.fastq", full.names = TRUE))
 fnRs <- sort(list.files(data_dir, pattern="_R2_001.fastq", full.names = TRUE))
 ```
 
-# Quality Check 
+# Quality Check
 
 ### Question 1
 
@@ -167,4 +146,165 @@ ggsave(filename = "reverseErrorRate.pdf",plot = p2, path = output_dir)
 
 The reverse and forward reads appear to have similar trend lines.
 
-## ASV Inference 
+## ASV Inference
+
+```{r}
+# dada function removes all seq. errors - outputs error corrected reads.  
+dadaFs <- dada(filtFs, err=errF, multithread = TRUE)
+
+dadaRs <- dada(filtRs, err=errF, multithread = TRUE)
+
+# algorithm identifies actaul sequence variants by taking into account errors introducted during seq. or PCR.  
+dadaFs[[1]]
+```
+
+## Paired-end read merging
+
+```{r}
+# Merge paired-end sequences - output each sample's merged seq. 
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+
+# Inspect the merger data.frame from the first sample
+DT::datatable(mergers$F3D0,options = list(scrollX = TRUE, autoWidth = TRUE))
+```
+
+## Sequence table construction
+
+```{r}
+# Tabulate data for analysis 
+  # rows: samples 
+  # columns: ASV's 
+seqtab <- makeSequenceTable(mergers)
+
+dim(seqtab)
+```
+
+```{r}
+# Sanity check 
+table(nchar(getSequences(seqtab)))
+```
+
+## Chimera removal
+
+```{r}
+# Removing chimeras: integration of 2 diff. templates to 1 PCR product
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=F, verbose=TRUE)
+
+#Proportion ASVs were removed due to chimeras?
+100-(dim(seqtab.nochim)[2]/dim(seqtab)[2]*100)
+# 21% of a merged sequence variants represents chimeras 
+
+sum(seqtab.nochim)/sum(seqtab)*100
+# 96.4% of the total # of reads represents non-chimeric sequences.  
+# So, only aprox 4% of total reads represents chimeric seq for merged sequences.  
+
+```
+
+```{r}
+# Sanity Check
+# read retention through pipeline 
+
+# Function to sum # of unique occurances (seq)
+getN <- function(x){ 
+  sum(getUniques(x))
+}
+
+# Run defined function on all list elements to gather tracking data 
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+
+# Finally, calculate proportion kepy and display it
+track <- as.data.frame(track) %>% mutate(prop_kept = round(nonchim/input*100,2))
+
+DT::datatable(track)
+```
+
+```{r}
+# Data polishing part 1 
+
+# Update ASV matrix to data table (ie. workable format)
+ASV_tbl <- as.data.frame(seqtab.nochim) %>% 
+  `colnames<-`(base::paste("ASV", seq(1:ncol(seqtab.nochim)), sep = ""))
+
+DT::datatable(ASV_tbl, options = list(scrollX = TRUE, autoWidth = TRUE))
+```
+
+```{r}
+# Remove mock community 
+
+ASV_tbl <- as.data.frame(t(ASV_tbl[-nrow(ASV_tbl),]))
+
+# lets remove the ASVs that were only present in the mock communities
+
+ASV_tbl <- ASV_tbl %>% mutate(rs = rowSums(ASV_tbl)) %>% 
+  filter(rs > 0) %>% dplyr::select(-rs)
+# lost 14 ASV's as mock community are human pathogens not expected in mice 
+```
+
+```{r}
+# Next, generate DNAStringSet variable - used to export FASTA file 
+
+#Using DNAStringSet from Biostrings to read the seqs 
+ASV_seqs <- DNAStringSet(base::colnames(seqtab.nochim) %>% 
+                           `names<-`(base::paste("ASV",seq(1:ncol(seqtab.nochim)),sep = "")))
+```
+
+## Taxonomic assignment - Sequence annotation
+
+```{r}
+# Assign taxonomy to sequence variants 
+taxa <- assignTaxonomy(seqtab.nochim, here::here("data/silva_nr99_v138.1_wSpecies_train_set.fa.gz"), multithread=TRUE)
+```
+
+```{r}
+# Data polishing part 2
+
+# update taxa matrix into datatable 
+taxa2 <- as.data.frame(taxa) %>% 
+  `row.names<-`(base::paste("ASV", seq(1:nrow(taxa)), sep = ""))
+
+DT::datatable(taxa2,options = list(scrollX = TRUE, autoWidth = TRUE))
+```
+
+```{r}
+# Based on inspection, some ASV were classified as cynobacteria/ chloroplast (unexpcted for mouse gut) or mitochondria 
+
+# Remove non-prokaryotic ASV
+taxa2 <- taxa2 %>% filter(Family != "Mitochondria") %>% filter(Order != "Chloroplast")
+
+taxa3 <- taxa2 %>% mutate(ASVs = row.names(taxa2)) %>% dplyr::select(ASVs, everything())
+ASV_tbl2 <- ASV_tbl %>% mutate(ASVs=row.names(ASV_tbl)) %>% dplyr::select(ASVs, everything())
+```
+
+```{r}
+# Join taxa table - used for analysis outside of phyloseq 
+taxa3 <- taxa3 %>% inner_join(ASV_tbl2, by = "ASVs")
+
+# taxa2 used for phyloseq analysis 
+taxa2 <- taxa2 %>% filter(rownames(taxa2)%in%taxa3$ASVs)
+
+# filter original ASV table 
+ASV_tbl <- ASV_tbl %>% filter(row.names(ASV_tbl) %in% taxa3$ASVs)
+
+# Generate table of relative abundance of taxa per sample 
+# sweep function used as samples are the columns 
+taxa3[,(ncol(taxa2)+2):ncol(taxa3)] <- sweep(
+  taxa3[,(ncol(taxa2)+2):ncol(taxa3)],2,
+  colSums(taxa3[,(ncol(taxa2)+2):ncol(taxa3)]),'/')*100
+
+# sanity check - Expect sum = 100%
+colSums(taxa3[,(ncol(taxa2)+2):ncol(taxa3)])
+```
+
+```{r}
+# Clean up StringSet
+ASV_seqs[names(ASV_seqs)%in%ASV_tbl2$ASVs]
+
+# Export StringSet to Fasta file 
+writeXStringSet(ASV_seqs[names(ASV_seqs)%in%ASV_tbl2$ASVs], here::here("outputs/mouse_ASVs.fa"))
+
+# Check the file is okay 
+readLines(here::here("outputs/mouse_ASVs.fa"))[1:10]
+```
