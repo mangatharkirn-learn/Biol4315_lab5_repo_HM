@@ -397,3 +397,30 @@ rnd.csv <- rnd[1:2]
 
 write.csv(rnd.csv, file = here::here("outputs/richness_and_diversity.csv"), row.names = FALSE)
 ```
+
+### Question 5
+
+```{r}
+# plot the diversity and richness estimations
+
+rnd <- rnd %>% mutate(group = row.names(rnd))%>% inner_join(mdta, "group")
+#make a long table
+rndl <- rnd %>% gather("Estimator", "Value", 1:4) %>% 
+  mutate(rd = if_else(Estimator == "Observed" | Estimator == "ACE", 
+                      "Richness","Diversity"))
+```
+
+```{r}
+library(RColorBrewer)
+
+rnd_plot <- ggplot(rndl, aes(x=dpw, y=Value, color = Estimator, fill= Estimator))+
+  geom_bar(stat = "identity", position = position_dodge())+
+  theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+  scale_fill_brewer(palette = "Dark2")+
+  facet_grid(rd~category, scales = "free")
+
+# Export plot as PDF to github
+ggsave(filename = "richness_and_diveristy.pdf",plot = rnd_plot, path = here::here("outputs/"))
+
+```
