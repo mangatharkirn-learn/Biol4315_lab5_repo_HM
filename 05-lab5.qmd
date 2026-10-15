@@ -241,6 +241,9 @@ ASV_tbl <- as.data.frame(t(ASV_tbl[-nrow(ASV_tbl),]))
 ASV_tbl <- ASV_tbl %>% mutate(rs = rowSums(ASV_tbl)) %>% 
   filter(rs > 0) %>% dplyr::select(-rs)
 # lost 14 ASV's as mock community are human pathogens not expected in mice 
+
+
+DT::datatable(ASV_tbl, options = list(scrollX = TRUE, autoWidth = TRUE))
 ```
 
 ```{r}
@@ -298,6 +301,8 @@ taxa3[,(ncol(taxa2)+2):ncol(taxa3)] <- sweep(
 colSums(taxa3[,(ncol(taxa2)+2):ncol(taxa3)])
 ```
 
+### Question 3
+
 ```{r}
 # Clean up StringSet
 ASV_seqs[names(ASV_seqs)%in%ASV_tbl2$ASVs]
@@ -307,4 +312,88 @@ writeXStringSet(ASV_seqs[names(ASV_seqs)%in%ASV_tbl2$ASVs], here::here("outputs/
 
 # Check the file is okay 
 readLines(here::here("outputs/mouse_ASVs.fa"))[1:10]
+```
+
+```{r}
+# ASV from phylum Firmicutes 
+asv15 <- ASV_seqs[names(ASV_seqs) == "ASV15"]
+
+as.character(asv15)
+
+# BLASTn results against nr/nt database
+  # 100 sequence results with no identified species name. 
+```
+
+![](images/Screenshot 2026-10-15 at 11.45.24 AM.png)
+
+```{r}
+# ASV from phylum Actinobacteria
+asv188 <- ASV_seqs[names(ASV_seqs) == "ASV188"]
+
+as.character(asv188)
+
+# BLASTn results against nr/nt database
+  # All outputed sequences have 100% coverage 
+  # species identified are Enterorhabdus sp., and Adlercreutzia muris
+```
+
+![](images/Screenshot 2026-10-15 at 11.50.42 AM.png)
+
+## Accuracy Evaluation
+
+```{r}
+# Evaluating DADA2’s accuracy on the mock community
+unqs.mock <- seqtab.nochim["Mock",]
+unqs.mock <- sort(unqs.mock[unqs.mock>0], decreasing=TRUE) # Drop ASVs absent in the Mock
+cat("DADA2 inferred", length(unqs.mock), "sample sequences present in the Mock community.\n")
+
+mock.ref <- getSequences(file.path(data_dir, "HMP_MOCK.v35.fasta"))
+match.ref <- sum(sapply(names(unqs.mock), function(x) any(grepl(x, mock.ref))))
+cat("Of those,", sum(match.ref), "were exact matches to the expected reference sequences.\n")
+```
+
+# Sample Analysis 
+
+```{r}
+# lets see what it looks like
+mdta <- read.delim(base::paste(data_dir,"mouse.dpw.metadata", sep = "/" ))
+
+# Are the sample names similar to the sample names we have in the ASV table?
+length(mdta$group %in% colnames(ASV_tbl))
+
+# No, so set the row names and massage the table
+
+mdta <- mdta %>% mutate(category = if_else(dpw > 100 , "Late","Early")) %>% 
+  mutate(gender = if_else(str_detect(group, "F"),"F","M")) %>%
+  mutate(subject = str_extract(str_split_fixed(group, "D", 2)[,1],"(\\d)+")) %>%
+  `row.names<-`(mdta$group)
+
+#Generating the phyloseq object
+ps <- phyloseq(otu_table(as.matrix(ASV_tbl), taxa_are_rows=T), 
+               sample_data(mdta), 
+               tax_table(as.matrix(taxa2)))
+
+ps <- merge_phyloseq(ps, ASV_seqs)
+
+ps
+```
+
+## Alpha diversity visualization
+
+### Question 4
+
+```{r}
+#Lets calculate richness and diversity
+#Shannon and Simpson are diversity estimators, ACE is a richness estimator, observed is how many ASVs we have (198)
+rnd <- estimate_richness(
+  ps, measures=c("Observed", "ACE","Shannon", "Simpson")) %>% 
+  dplyr::select(-se.ACE)
+
+DT::datatable(rnd[1:2])
+
+# Export table as CSV file 
+
+rnd.csv <- rnd[1:2]
+
+write.csv(rnd.csv, file = here::here("outputs/richness_and_diversity.csv"), row.names = FALSE)
 ```
